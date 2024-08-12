@@ -85,7 +85,7 @@ def calculate_unique_spectra(frequency_data, B):
     return unique_spectra
 
 def compare_files():
-    global comparison_results
+    global comparison_results, frequency_data
     comparison_files = filedialog.askopenfilenames(filetypes=[("WAV files", "*.wav")])
     if comparison_files:
         comparison_results = {}  # Clear previous results
@@ -98,13 +98,23 @@ def compare_files():
             yf = np.fft.fft(data)
             xf = np.fft.fftfreq(n, 1 / sample_rate)
             magnitudes_dn = np.abs(yf[:n // 2])
-            frequencies_dn = np.round(xf[:n // 2], -1)
+            frequencies_dn = xf[:n // 2]
+            
+            # Round frequencies and magnitudes for easier matching
+            rounded_frequencies_dn = np.round(frequencies_dn, -1)
+            rounded_magnitudes_dn = np.round(magnitudes_dn, -1)
+
+            # Store the results for the comparison file
+            frequency_data[file_name] = {
+                'frequencies': rounded_frequencies_dn,
+                'magnitudes': rounded_magnitudes_dn
+            }
 
             # Subtract common spectrum B from Dn to get Dn-B
             dn_minus_b = {}
-            for i, freq in enumerate(frequencies_dn):
+            for i, freq in enumerate(rounded_frequencies_dn):
                 if freq in common_spectrum:
-                    dn_minus_b[freq] = np.round(magnitudes_dn[i] - common_spectrum[freq], -1)
+                    dn_minus_b[freq] = np.round(rounded_magnitudes_dn[i] - common_spectrum[freq], -1)
 
             # Compare Dn-B with the unique spectra Cn
             similarities = {}
@@ -188,34 +198,39 @@ def plot_selected_results():
         fig = go.Figure()
 
         for i in selected_files:
-            dn_file = listbox.get(i)
-            if dn_file in frequency_data:
-                data_dn = frequency_data[dn_file]
+            dn_file_name = listbox.get(i)
+            dn_file_name = listbox.get(i)  # Get the name of the selected file
+
+            # Plot original spectra of the comparison file
+            if dn_file_name in frequency_data:
+                data_dn = frequency_data[dn_file_name]
                 fig.add_trace(go.Scatter(
                     x=data_dn['frequencies'],
                     y=data_dn['magnitudes'],
                     mode='lines',
-                    name=f"{dn_file} Magnitudes"
+                    name=f"Original: {dn_file_name} Magnitudes"
                 ))
 
-            # Plot the common spectrum
-            fig.add_trace(go.Scatter(
-                x=list(common_spectrum.keys()),
-                y=list(common_spectrum.values()),
-                mode='lines',
-                name="Common Spectrum (B)",
-                line=dict(dash='dash', color='black', width=3)  # Enhance the appearance
-            ))
+            # Plot unique spectra for each sample file compared to the current file
+            if dn_file_name in comparison_results:
+                for sample_file_name in comparison_results[dn_file_name]:
+                    if sample_file_name in unique_spectra:
+                        fig.add_trace(go.Scatter(
+                            x=list(unique_spectra[sample_file_name].keys()),
+                            y=list(unique_spectra[sample_file_name].values()),
+                            mode='lines',
+                            name=f"Unique Spectrum Cn: {sample_file_name}",
+                            line=dict(dash='dot')
+                        ))
 
-            for sample_file, _ in comparison_results[dn_file].items():
-                if sample_file in unique_spectra:
-                    fig.add_trace(go.Scatter(
-                        x=list(unique_spectra[sample_file].keys()),
-                        y=list(unique_spectra[sample_file].values()),
-                        mode='lines',
-                        name=f"Unique Spectrum Cn: {sample_file}",
-                        line=dict(dash='dot')
-                    ))
+            # Optionally, you can uncomment the next lines if you want to include the common spectrum:
+            # fig.add_trace(go.Scatter(
+            #     x=list(common_spectrum.keys()),
+            #     y=list(common_spectrum.values()),
+            #     mode='lines',
+            #     name="Common Spectrum (B)",
+            #     line=dict(dash='dash', color='black', width=3)
+            # ))
 
         fig.update_layout(
             title="Comparison Results: Frequency vs Magnitude",
@@ -233,6 +248,12 @@ def update_log(message):
     log_text.insert(tk.END, message + "\n")
     log_text.see(tk.END)
     logging.info(message)
+
+# Tkinter-based GUI
+
+def clear_log():
+    log_text.delete(1.0, tk.END)
+    logging.info("Log cleared.")
 
 # Tkinter-based GUI
 
@@ -262,6 +283,9 @@ plot_button.grid(row=0, column=2, padx=5, pady=5)
 
 plot_results_button = tk.Button(frame, text="Plot Selected Results", command=plot_selected_results)
 plot_results_button.grid(row=0, column=3, padx=5, pady=5)
+
+clear_log_button = tk.Button(frame, text="Clear Log", command=clear_log)
+clear_log_button.grid(row=0, column=4, padx=5, pady=5)
 
 log_text = scrolledtext.ScrolledText(root, width=60, height=20, wrap=tk.WORD)
 log_text.pack(pady=10)
