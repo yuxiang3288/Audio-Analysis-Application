@@ -86,13 +86,13 @@ def calculate_unique_spectra(frequency_data, B):
 
 def compare_files():
     global comparison_results, frequency_data
-    comparison_files = filedialog.askopenfilenames(filetypes=[("WAV files", "*.wav")])
+    comparison_files = filedialog.askopenfilenames(filetypes=[("WAV文件", "*.wav")])
     if comparison_files:
         comparison_results = {}  # Clear previous results
         all_results = []
         for dn_file in comparison_files:
             file_name = os.path.basename(dn_file)
-            # Perform Fourier Transform on the new file
+            # Perform Fourier Transform on the comparison file (Dn)
             sample_rate, data = wavfile.read(dn_file)
             n = len(data)
             yf = np.fft.fft(data)
@@ -110,25 +110,29 @@ def compare_files():
                 'magnitudes': rounded_magnitudes_dn
             }
 
-            # Subtract common spectrum B from Dn to get Dn-B
-            dn_minus_b = {}
+            # Calculate the unique spectrum of the comparison file by subtracting the common spectrum B from Dn
+            dn_unique_spectrum = {}
             for i, freq in enumerate(rounded_frequencies_dn):
                 if freq in common_spectrum:
-                    dn_minus_b[freq] = np.round(rounded_magnitudes_dn[i] - common_spectrum[freq], -1)
+                    # Subtract the common spectrum from the original spectrum of Dn
+                    dn_unique_spectrum[freq] = np.round(rounded_magnitudes_dn[i] - common_spectrum[freq], -1)
+                else:
+                    dn_unique_spectrum[freq] = rounded_magnitudes_dn[i]
 
-            # Compare Dn-B with the unique spectra Cn
+            # Compare the unique spectrum of the comparison file (Dn - B) with the unique spectra of the sample files (Cn)
             similarities = {}
             for sample_file_name, Cn in unique_spectra.items():
-                matching_freqs = [freq for freq in dn_minus_b if freq in Cn]
+                matching_freqs = [freq for freq in dn_unique_spectrum if freq in Cn]
                 if matching_freqs:
-                    dn_magnitudes = [dn_minus_b[freq] for freq in matching_freqs]
+                    dn_magnitudes = [dn_unique_spectrum[freq] for freq in matching_freqs]
                     sample_magnitudes = [Cn[freq] for freq in matching_freqs]
 
                     if dn_magnitudes and sample_magnitudes:
+                        # Compute the similarity using dot product
                         similarity = np.dot(dn_magnitudes, sample_magnitudes) / (np.linalg.norm(dn_magnitudes) * np.linalg.norm(sample_magnitudes))
                         similarity = max(similarity, 0)  # Ensure non-negative similarity
                         similarities[sample_file_name] = similarity * 100  # Convert to percentage
-                        update_log(f"Similarity of {file_name} with {sample_file_name}: {similarity * 100:.2f}%")
+                        update_log(f"{file_name} 与 {sample_file_name} 的相似度: {similarity * 100:.2f}%")
 
             # Store similarities for later plotting
             comparison_results[file_name] = similarities
@@ -136,17 +140,17 @@ def compare_files():
             # Sort similarities and prepare the result text
             if similarities:
                 sorted_similarities = sorted(similarities.items(), key=lambda item: item[1], reverse=True)
-                result_text = f"Results for {file_name}:\n" + "\n".join([f"{file}: {similarity:.2f}%" for file, similarity in sorted_similarities])
+                result_text = f"{file_name} 的结果:\n" + "\n".join([f"{file}: {similarity:.2f}%" for file, similarity in sorted_similarities])
                 all_results.append(result_text)
             else:
-                all_results.append(f"No matching frequencies found for comparison in {file_name}.")
+                all_results.append(f"{file_name} 中未找到匹配的频率用于比较。")
 
         # Show results in a new window
         show_results_window("\n\n".join(all_results))
 
 def show_results_window(results_text):
     result_window = Toplevel(root)
-    result_window.title("Comparison Results")
+    result_window.title("比较结果")
     
     text_area = Text(result_window, wrap=tk.WORD, width=80, height=20)
     text_area.pack(expand=True, fill=tk.BOTH)
@@ -156,7 +160,7 @@ def show_results_window(results_text):
 
 def plot_original_spectra():
     if not frequency_data:
-        messagebox.showwarning("Plotting Error", "No files loaded to plot.")
+        messagebox.showwarning("绘图错误", "未加载任何文件用于绘图。")
         return
 
     fig = go.Figure()
@@ -167,13 +171,13 @@ def plot_original_spectra():
             x=data['frequencies'],
             y=data['magnitudes'],
             mode='lines',
-            name=f"Original: {file_name}"
+            name=f"原始频谱: {file_name}"
         ))
 
     fig.update_layout(
-        title="Original Spectral Components of Audio Files",
-        xaxis_title="Frequency (Hz)",
-        yaxis_title="Magnitude",
+        title="音频文件的原始频谱成分",
+        xaxis_title="频率 (Hz)",
+        yaxis_title="幅度",
         showlegend=True
     )
 
@@ -181,110 +185,97 @@ def plot_original_spectra():
 
 def plot_selected_results():
     if not comparison_results:
-        messagebox.showwarning("Plotting Error", "No comparison results available to plot.")
+        messagebox.showwarning("绘图错误", "没有可用于绘图的比较结果。")
         return
     
-    # Open a selection dialog for which files to plot
-    select_window = Toplevel(root)
-    select_window.title("Select Files to Plot")
+    fig = go.Figure()
 
-    listbox = Listbox(select_window, selectmode=MULTIPLE)
-    for dn_file in comparison_results.keys():
-        listbox.insert(tk.END, dn_file)
-    listbox.pack(expand=True, fill=tk.BOTH, padx=20, pady=20)
+    # Keep track of which sample files' unique spectra have already been plotted
+    plotted_sample_files = set()
 
-    def plot_selected():
-        selected_files = listbox.curselection()
-        fig = go.Figure()
+    # After plotting all comparison files, plot the unique spectra of the sample files
+    for dn_file_name in comparison_results.keys():
+        for sample_file_name in comparison_results[dn_file_name]:
+            if sample_file_name not in plotted_sample_files and sample_file_name in unique_spectra:
+                sample_spectrum_frequencies = list(unique_spectra[sample_file_name].keys())
+                sample_spectrum_magnitudes = list(unique_spectra[sample_file_name].values())
 
-        for i in selected_files:
-            dn_file_name = listbox.get(i)
-            dn_file_name = listbox.get(i)  # Get the name of the selected file
-
-            # Plot original spectra of the comparison file
-            if dn_file_name in frequency_data:
-                data_dn = frequency_data[dn_file_name]
                 fig.add_trace(go.Scatter(
-                    x=data_dn['frequencies'],
-                    y=data_dn['magnitudes'],
+                    x=sample_spectrum_frequencies,
+                    y=sample_spectrum_magnitudes,
                     mode='lines',
-                    name=f"Original: {dn_file_name} Magnitudes"
+                    name=f"样本特征频谱 Cn: {sample_file_name}",
+                    line=dict(dash='solid')
                 ))
 
-            # Plot unique spectra for each sample file compared to the current file
-            if dn_file_name in comparison_results:
-                for sample_file_name in comparison_results[dn_file_name]:
-                    if sample_file_name in unique_spectra:
-                        fig.add_trace(go.Scatter(
-                            x=list(unique_spectra[sample_file_name].keys()),
-                            y=list(unique_spectra[sample_file_name].values()),
-                            mode='lines',
-                            name=f"Unique Spectrum Cn: {sample_file_name}",
-                            line=dict(dash='dot')
-                        ))
+                # Mark this sample file as plotted
+                plotted_sample_files.add(sample_file_name)
 
-            # Optionally, you can uncomment the next lines if you want to include the common spectrum:
-            # fig.add_trace(go.Scatter(
-            #     x=list(common_spectrum.keys()),
-            #     y=list(common_spectrum.values()),
-            #     mode='lines',
-            #     name="Common Spectrum (B)",
-            #     line=dict(dash='dash', color='black', width=3)
-            # ))
+    # Plot the unique spectrum of the comparison files (Dn - B) first
+    for dn_file_name in comparison_results.keys():
+        if dn_file_name in frequency_data:
+            compare_file_unique_spectrum = frequency_data[dn_file_name]['frequencies']
+            compare_file_unique_magnitudes = frequency_data[dn_file_name]['magnitudes']
 
-        fig.update_layout(
-            title="Comparison Results: Frequency vs Magnitude",
-            xaxis_title="Frequency (Hz)",
-            yaxis_title="Magnitude",
-            showlegend=True
-        )
+            fig.add_trace(go.Scatter(
+                x=list(compare_file_unique_spectrum),
+                y=list(compare_file_unique_magnitudes),
+                mode='lines',
+                name=f"对比文件特殊频谱: {dn_file_name}",
+                line=dict(dash='dot')
+            ))
 
-        fig.show()
+    # Update the layout of the plot
+    fig.update_layout(
+        title="比较结果: 特征频谱 (频率 vs 幅度)",
+        xaxis_title="频率 (Hz)",
+        yaxis_title="幅度",
+        showlegend=True
+    )
 
-    plot_button = tk.Button(select_window, text="Plot Selected", command=plot_selected)
-    plot_button.pack(pady=10)
+    # Show the plot
+    fig.show()
+
 
 def update_log(message):
     log_text.insert(tk.END, message + "\n")
     log_text.see(tk.END)
     logging.info(message)
 
-# Tkinter-based GUI
-
 def clear_log():
     log_text.delete(1.0, tk.END)
-    logging.info("Log cleared.")
+    logging.info("日志已清除。")
 
 # Tkinter-based GUI
 
 def load_sample_files():
-    file_paths = filedialog.askopenfilenames(filetypes=[("WAV files", "*.wav")])
+    file_paths = filedialog.askopenfilenames(filetypes=[("WAV文件", "*.wav")])
     if file_paths:
         frequency_data = parse_wav_files(file_paths)
         common_spectrum = calculate_common_spectrum(frequency_data)
         unique_spectra = calculate_unique_spectra(frequency_data, common_spectrum)
-        update_log("Sample files loaded and analyzed.")
+        update_log("样本文件已加载并分析。")
 
 # Main GUI Application
 root = tk.Tk()
-root.title("Audio Analysis Application")
+root.title("音频分析应用程序")
 
 frame = tk.Frame(root)
 frame.pack(pady=10)
 
-load_samples_button = tk.Button(frame, text="Load Sample Files", command=load_sample_files)
+load_samples_button = tk.Button(frame, text="加载样本文件", command=load_sample_files)
 load_samples_button.grid(row=0, column=0, padx=5, pady=5)
 
-compare_button = tk.Button(frame, text="Compare Files", command=compare_files)
+compare_button = tk.Button(frame, text="选择比较文件", command=compare_files)
 compare_button.grid(row=0, column=1, padx=5, pady=5)
 
-plot_button = tk.Button(frame, text="Plot Original Spectra", command=plot_original_spectra)
+plot_button = tk.Button(frame, text="绘制原始频谱", command=plot_original_spectra)
 plot_button.grid(row=0, column=2, padx=5, pady=5)
 
-plot_results_button = tk.Button(frame, text="Plot Selected Results", command=plot_selected_results)
+plot_results_button = tk.Button(frame, text="绘制特征频谱", command=plot_selected_results)
 plot_results_button.grid(row=0, column=3, padx=5, pady=5)
 
-clear_log_button = tk.Button(frame, text="Clear Log", command=clear_log)
+clear_log_button = tk.Button(frame, text="清除日志", command=clear_log)
 clear_log_button.grid(row=0, column=4, padx=5, pady=5)
 
 log_text = scrolledtext.ScrolledText(root, width=60, height=20, wrap=tk.WORD)
